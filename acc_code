@@ -1,0 +1,65 @@
+%%writefile acc_code.c
+#include <stdlib.h>
+#include <stdio.h>
+#include <time.h>
+
+void printMatrix(int *matrix, int numRows, int numCols){
+    for(int i = 0; i < numRows; i++){
+        for(int j = 0; j < numCols; j++){
+            printf("%d ", matrix[i * numCols + j]);
+        }
+        printf("\n");
+    }
+}
+
+void initializeMatrix(int *matrix, int numRows, int numCols){
+    for(int i = 0; i < numRows; i++){
+        for(int j = 0; j < numCols; j++){
+            matrix[i * numCols + j] = rand() % 100;
+        }
+    }
+}
+
+int main(){
+    int numRowsA = 1 << 10;
+    int numColsA = 1 << 8;
+    int numRowsB = numColsA;
+    int numColsB = numRowsA;
+    int numRowsC = numRowsA;
+    int numColsC = numRowsB;
+
+    int *matrixA = (int *)malloc(numRowsA * numColsA * sizeof(int));
+    int *matrixB = (int *)malloc(numRowsB * numColsB * sizeof(int));
+    int *matrixC = (int *)malloc(numRowsC * numColsC * sizeof(int));
+
+    initializeMatrix(matrixA, numRowsA, numColsA);
+    initializeMatrix(matrixB, numRowsB, numColsB);
+
+    clock_t start_time = clock();
+
+    #pragma acc kernels copyin(matrixA[0:numRowsA*numColsA], matrixB[0:numRowsB*numColsB]) copy(matrixC[0:numRowsC*numColsC])
+    {
+        #pragma acc loop independent
+        for(int i = 0; i < numRowsA; i++){
+            #pragma acc loop independent
+            for(int j = 0; j < numColsB; j++){
+                float sumMatrix = 0;
+                #pragma acc loop independent reduction(+:sumMatrix)
+                for(int x = 0; x < numColsA; x++){
+                    sumMatrix += matrixA[i * numColsA + x] * matrixB[x * numColsB + j];
+                }
+                matrixC[i * numColsC + j] = sumMatrix;
+            }
+        }
+    }
+
+    clock_t end_time = clock();
+    double elapsed_time = ((double)(end_time - start_time)) / CLOCKS_PER_SEC * 1000;
+    printf("The time in OpenACC was: %f milliseconds\n", elapsed_time);
+
+    free(matrixA);
+    free(matrixB);
+    free(matrixC);
+
+    return 0;
+}
