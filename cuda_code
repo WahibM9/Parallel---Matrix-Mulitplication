@@ -1,0 +1,107 @@
+%%writefile cuda_code.cu
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+
+#define TILE_SIZE 32
+
+__global__ void matrixMultiply(int *matrixA, int *matrixB, int *matrixC, int rows, int cols) {
+    __shared__ int sharedMatrixA[TILE_SIZE][TILE_SIZE];
+    __shared__ int sharedMatrixB[TILE_SIZE][TILE_SIZE];
+
+    int blockRow = blockIdx.y;
+    int blockCol = blockIdx.x;
+    int threadRow = threadIdx.y;
+    int threadCol = threadIdx.x;
+
+    int row = blockRow * TILE_SIZE + threadRow;
+    int col = blockCol * TILE_SIZE + threadCol;
+
+    int tempResult = 0;
+
+    for (int i = 0; i < (cols / TILE_SIZE); i++) {
+        sharedMatrixA[threadRow][threadCol] = matrixA[row * cols + i * TILE_SIZE + threadCol];
+        sharedMatrixB[threadRow][threadCol] = matrixB[(i * TILE_SIZE + threadRow) * rows + col];
+        __syncthreads();
+
+        for (int j = 0; j < TILE_SIZE; j++) {
+            tempResult += sharedMatrixA[threadRow][j] * sharedMatrixB[j][threadCol];
+        }
+        __syncthreads();
+    }
+
+    if (row < rows && col < cols)
+        matrixC[row * cols + col] = tempResult;
+}
+
+void initializeMatrix(int *matrix, int rows, int cols) {
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            matrix[i * cols + j] = rand() % 100;
+        }
+    }
+}
+
+void printMatrix(int *matrix, int rows, int cols) {
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            printf("%d ", matrix[i * cols + j]);
+        }
+        printf("\n");
+    }
+}
+
+int main() {
+    int numRows = 1000;
+    int numCols = 2000;
+    size_t bytes = numRows * numCols * sizeof(int);
+
+    int *hostMatrixA, *hostMatrixB, *hostMatrixC;
+    hostMatrixA = (int *)malloc(bytes);
+    hostMatrixB = (int *)malloc(bytes);
+    hostMatrixC = (int *)malloc(bytes);
+
+    int *deviceMatrixA, *deviceMatrixB, *deviceMatrixC;
+    cudaMalloc(&deviceMatrixA, bytes);
+    cudaMalloc(&deviceMatrixB, bytes);
+    cudaMalloc(&deviceMatrixC, bytes);
+
+    initializeMatrix(hostMatrixA, numRows, numCols);
+    initializeMatrix(hostMatrixB, numRows, numCols);
+
+    cudaMemcpy(deviceMatrixA, hostMatrixA, bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceMatrixB, hostMatrixB, bytes, cudaMemcpyHostToDevice);
+
+    dim3 grid((numCols + TILE_SIZE - 1) / TILE_SIZE, (numRows + TILE_SIZE - 1) / TILE_SIZE);
+    dim3 threads(TILE_SIZE, TILE_SIZE);
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start, NULL);
+
+    matrixMultiply<<<grid, threads>>>(deviceMatrixA, deviceMatrixB, deviceMatrixC, numRows, numCols);
+
+    cudaEventRecord(stop, NULL);
+    cudaEventSynchronize(stop);
+
+    cudaMemcpy(hostMatrixC, deviceMatrixC, bytes, cudaMemcpyDeviceToHost);
+
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    printf("The time in CUDA was %.2f ms\n", milliseconds);
+
+    printf("Matrix C:\n");
+    printMatrix(hostMatrixC, numRows, numCols);
+
+    free(hostMatrixA);
+    free(hostMatrixB);
+    free(hostMatrixC);
+
+    cudaFree(deviceMatrixA);
+    cudaFree(deviceMatrixB);
+    cudaFree(deviceMatrixC);
+
+    return 0;
+}
